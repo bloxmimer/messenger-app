@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const app = express();
@@ -66,38 +65,6 @@ setInterval(() => {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users, messages, chats, nextId: nextMessageId }, null, 2));
 }, 10000);
 
-const emailConfig = {
-    service: 'gmail',
-    auth: {
-        user: 'antiblock.messenger@gmail.com',
-        pass: 'gxkx ogpu olfa tqtn'
-    }
-};
-
-const transporter = nodemailer.createTransport(emailConfig);
-
-async function sendCodeEmail(email, code) {
-    try {
-        await transporter.sendMail({
-            from: `"AntiBlock" <${emailConfig.auth.user}>`,
-            to: email,
-            subject: 'AntiBlock - Your Code',
-            html: `<div style="font-family:Arial;padding:20px;max-width:500px;margin:0 auto;">
-                        <h2 style="color:#667eea;">AntiBlock</h2>
-                        <p>Your verification code:</p>
-                        <div style="font-size:48px;font-weight:bold;background:#f5f5f5;padding:20px;text-align:center;border-radius:10px;">${code}</div>
-                        <p>Valid for 10 minutes.</p>
-                        <small>If you didn't request this, ignore this email.</small>
-                   </div>`
-        });
-        console.log(`✓ Email to ${email}`);
-        return true;
-    } catch (e) {
-        console.log(`✗ Email error: ${e.message}`);
-        return false;
-    }
-}
-
 function generateId() {
     return Math.floor(100000000 + Math.random() * 900000000);
 }
@@ -112,9 +79,17 @@ app.post('/api/auth/send-code', async (req, res) => {
     const { email } = req.body;
     const code = Math.floor(100000 + Math.random() * 900000);
     codes[email] = { code, expires: Date.now() + 600000 };
-    const sent = await sendCodeEmail(email, code);
-    if (!sent) console.log(`\n===== CODE: ${code} for ${email} =====\n`);
-    res.json({ success: true });
+    
+    // Показываем код в консоли (всегда работает)
+    console.log(`\n╔════════════════════════════════════════╗`);
+    console.log(`║         VERIFICATION CODE            ║`);
+    console.log(`╠════════════════════════════════════════╣`);
+    console.log(`║ Email: ${email}`);
+    console.log(`║ Code:  ${code}`);
+    console.log(`║ Valid: 10 minutes`);
+    console.log(`╚════════════════════════════════════════╝\n`);
+    
+    res.json({ success: true, message: 'Code shown in console' });
 });
 
 app.post('/api/auth/verify-code', (req, res) => {
@@ -129,6 +104,7 @@ app.post('/api/auth/verify-code', (req, res) => {
     if (!user) {
         user = { id: generateId(), email, name: email.split('@')[0], avatar: null, bio: '', created_at: new Date() };
         users.push(user);
+        console.log(`✨ New user: ${user.name} (ID: ${user.id})`);
     }
     const token = Buffer.from(`${user.id}:${Date.now()}:${ip}`).toString('base64');
     sessions[token] = {
@@ -361,12 +337,7 @@ fs.writeFileSync(path.join(publicDir, 'index.html'), `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
-            min-height: 100vh;
-            padding: 0;
-        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
         body.dark { background: #1a1a2e; }
         .container { max-width: 100%; margin: 0 auto; background: white; min-height: 100vh; }
         body.dark .container { background: #1e1e2e; }
@@ -654,19 +625,6 @@ fs.writeFileSync(path.join(publicDir, 'index.html'), `<!DOCTYPE html>
             display: inline-block;
             margin-left: 6px;
         }
-        .media-message {
-            max-width: 200px;
-            border-radius: 12px;
-            cursor: pointer;
-        }
-        .group-avatar {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #667eea;
-            color: white;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
@@ -719,7 +677,7 @@ fs.writeFileSync(path.join(publicDir, 'index.html'), `<!DOCTYPE html>
     
     <div id="profileEditor" class="hidden">
         <div style="padding: 16px;"><button onclick="closeProfileEditor()" class="secondary" style="margin-bottom:16px">← Back</button>
-            <div class="avatar-upload"><img id="profileAvatar" class="profile-avatar" onclick="document.getElementById('avatarInput').click()" /><div class="edit-icon" onclick="document.getElementById('avatarInput').click()">📷</div><input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="previewAvatar(this)" /></div>
+            <div><img id="profileAvatar" class="profile-avatar" onclick="document.getElementById('avatarInput').click()" /><div class="edit-icon" style="position:relative;top:-30px;left:35px;background:#667eea;border-radius:50%;padding:6px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:white" onclick="document.getElementById('avatarInput').click()">📷</div><input type="file" id="avatarInput" accept="image/*" style="display:none" onchange="previewAvatar(this)" /></div>
             <input type="text" id="profileName" placeholder="Name" /><textarea id="profileBio" placeholder="About you" rows="3"></textarea>
             <button onclick="saveProfile()">💾 Save</button><button onclick="deleteAvatar()" class="secondary">🗑️ Delete Photo</button>
         </div>
@@ -727,7 +685,7 @@ fs.writeFileSync(path.join(publicDir, 'index.html'), `<!DOCTYPE html>
     
     <div id="groupEditor" class="hidden">
         <div style="padding: 16px;"><button onclick="closeGroupEditor()" class="secondary" style="margin-bottom:16px">← Back</button>
-            <div class="avatar-upload"><img id="groupAvatar" class="profile-avatar" onclick="document.getElementById('groupAvatarInput').click()" /><div class="edit-icon" onclick="document.getElementById('groupAvatarInput').click()">📷</div><input type="file" id="groupAvatarInput" accept="image/*" style="display:none" onchange="previewGroupAvatar(this)" /></div>
+            <div><img id="groupAvatar" class="profile-avatar" onclick="document.getElementById('groupAvatarInput').click()" /><div class="edit-icon" style="position:relative;top:-30px;left:35px;background:#667eea;border-radius:50%;padding:6px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:white" onclick="document.getElementById('groupAvatarInput').click()">📷</div><input type="file" id="groupAvatarInput" accept="image/*" style="display:none" onchange="previewGroupAvatar(this)" /></div>
             <input type="text" id="groupName" placeholder="Group name" /><input type="text" id="groupParticipants" placeholder="User IDs (comma separated)" /><button onclick="createGroup()">Create Group</button>
         </div>
     </div>
@@ -908,7 +866,7 @@ async function sidebarSearchUser() {
         const d = await res.json();
         if (d.success) {
             if (d.user.id === currentUser.id) { showStatus('Cannot chat with yourself', 'error'); return; }
-            document.getElementById('sidebarSearchResult').innerHTML = '<div class="search-result" onclick="startChatWithUser('+d.user.id+')"><strong>'+d.user.name+'</strong><br>'+d.user.email+'<br>ID: '+d.user.id+'<span class="online-dot"></span></div>';
+            document.getElementById('sidebarSearchResult').innerHTML = '<div class="search-result" onclick="startChatWithUser('+d.user.id+')"><strong>'+d.user.name+'</strong><br>'+d.user.email+'<br>ID: '+d.user.id+'</div>';
             showStatus('User found!', 'success');
             closeSidebar();
         } else { showStatus('User not found', 'error'); }
@@ -961,8 +919,8 @@ async function sendCode(email) {
         if (d.success) {
             document.getElementById('authScreen').classList.add('hidden');
             document.getElementById('codePanel').classList.remove('hidden');
-            document.getElementById('codeEmailDisplay').innerHTML = 'Code sent to <strong>'+email+'</strong>';
-            showStatus('Check your email or server console!', 'success');
+            document.getElementById('codeEmailDisplay').innerHTML = 'Code sent to <strong>'+email+'</strong><br><small>Check Termux console for code!</small>';
+            showStatus('Code shown in Termux console!', 'success');
         }
     } catch(e) { showStatus('Error: '+e.message, 'error'); }
 }
@@ -1087,16 +1045,8 @@ async function loadMessages() {
             div.className = 'message-bubble ' + (msg.sender_id === currentUser.id ? 'sent' : 'received');
             const check = msg.sender_id === currentUser.id ? (msg.is_read ? '<span class="checkmark">✓✓</span>' : '<span class="checkmark">✓</span>') : '';
             const editBadge = msg.is_edited ? '<span style="font-size:10px;"> (edited)</span>' : '';
-            let content = '';
-            if (msg.type === 'image' && msg.media_url) {
-                content = '<img src="'+msg.media_url+'" class="media-message" style="max-width:200px;border-radius:12px;cursor:pointer" onclick="window.open(this.src)">';
-            } else if (msg.type === 'video' && msg.media_url) {
-                content = '<video src="'+msg.media_url+'" controls style="max-width:200px;border-radius:12px"></video>';
-            } else {
-                content = msg.text;
-            }
-            div.innerHTML = '<div>'+content+editBadge+'</div><div><span class="timestamp">'+new Date(msg.created_at).toLocaleTimeString()+'</span>'+check+'</div>';
-            if (msg.sender_id === currentUser.id && msg.type === 'text') {
+            div.innerHTML = '<div>'+msg.text+editBadge+'</div><div><span class="timestamp">'+new Date(msg.created_at).toLocaleTimeString()+'</span>'+check+'</div>';
+            if (msg.sender_id === currentUser.id) {
                 const menu = document.createElement('div');
                 menu.className = 'message-menu';
                 menu.innerHTML = '⋯';
