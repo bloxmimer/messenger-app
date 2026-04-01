@@ -1,28 +1,99 @@
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
+const fs = require('fs');
 const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-let users = [];
+// Файл для сохранения данных
+const DATA_FILE = 'antiblock_data.json';
+
+// Загрузка данных
+function loadData() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+            console.log('📂 Data loaded');
+            return data;
+        }
+    } catch (e) {}
+    return { users: [], messages: [], chats: [], nextId: 1 };
+}
+
+// Сохранение данных
+function saveData() {
+    try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify({ 
+            users, messages, chats, nextId: nextMessageId 
+        }, null, 2));
+        console.log('💾 Data saved');
+    } catch (e) {}
+}
+
+let { users, messages, chats, nextId: nextMessageId } = loadData();
 let codes = {};
-let messages = [];
-let chats = [];
+
+// Автосохранение каждые 10 секунд
+setInterval(saveData, 10000);
+
+// EMAIL CONFIGURATION
+const emailConfig = {
+    service: 'gmail',
+    auth: {
+        user: 'antiblock.messenger@gmail.com',
+        pass: 'gxkx ogpu olfa tqtn'
+    }
+};
+
+const transporter = nodemailer.createTransport(emailConfig);
+
+async function sendCodeEmail(email, code) {
+    try {
+        await transporter.sendMail({
+            from: `"AntiBlock" <${emailConfig.auth.user}>`,
+            to: email,
+            subject: 'AntiBlock - Your Verification Code',
+            html: `
+                <div style="font-family: Arial; max-width: 500px; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                    <h2 style="color: #667eea;">AntiBlock</h2>
+                    <p>Your verification code:</p>
+                    <div style="background: #f5f5f5; padding: 15px; font-size: 32px; text-align: center; font-weight: bold;">
+                        ${code}
+                    </div>
+                    <p>Valid for 10 minutes.</p>
+                </div>
+            `
+        });
+        console.log(`✓ Email sent to ${email}`);
+        return true;
+    } catch (error) {
+        console.error('✗ Email error:', error.message);
+        return false;
+    }
+}
 
 function generateId() {
     return Math.floor(100000000 + Math.random() * 900000000);
 }
 
-app.post('/api/auth/send-code', (req, res) => {
+app.post('/api/auth/send-code', async (req, res) => {
     const { email } = req.body;
     const code = Math.floor(100000 + Math.random() * 900000);
     codes[email] = { code, expires: Date.now() + 600000 };
-    console.log(`\n====================`);
-    console.log(`CODE: ${code}`);
-    console.log(`Email: ${email}`);
-    console.log(`====================\n`);
-    res.json({ success: true });
+    
+    const emailSent = await sendCodeEmail(email, code);
+    
+    if (emailSent) {
+        res.json({ success: true, message: 'Code sent to email' });
+    } else {
+        console.log(`\n╔════════════════════════════╗`);
+        console.log(`║ CODE: ${code}`);
+        console.log(`║ Email: ${email}`);
+        console.log(`╚════════════════════════════╝\n`);
+        res.json({ success: true, message: 'Check console for code' });
+    }
 });
 
 app.post('/api/auth/verify-code', (req, res) => {
@@ -36,7 +107,8 @@ app.post('/api/auth/verify-code', (req, res) => {
     if (!user) {
         user = { id: generateId(), email, name: email.split('@')[0], avatar: null, bio: '', created_at: new Date() };
         users.push(user);
-        console.log(`New user: ${user.name} (${user.id})`);
+        saveData();
+        console.log(`✨ New user: ${user.name} (${user.id})`);
     }
     res.json({ success: true, user });
 });
@@ -49,6 +121,7 @@ app.post('/api/users/update', (req, res) => {
     if (bio !== undefined) user.bio = bio;
     if (avatar === 'delete') user.avatar = null;
     else if (avatar && avatar.startsWith('data:image')) user.avatar = avatar;
+    saveData();
     res.json({ success: true, user });
 });
 
@@ -89,7 +162,7 @@ app.get('/api/messages/:chatId', (req, res) => {
 app.post('/api/messages/send', (req, res) => {
     const { chat_id, sender_id, text } = req.body;
     const msg = {
-        id: messages.length + 1,
+        id: nextMessageId++,
         chat_id,
         sender_id,
         text,
@@ -99,20 +172,21 @@ app.post('/api/messages/send', (req, res) => {
         deleted: false
     };
     messages.push(msg);
+    saveData();
     res.json({ success: true, message: msg });
 });
 
 app.post('/api/messages/edit', (req, res) => {
     const { message_id, new_text } = req.body;
     const msg = messages.find(m => m.id === message_id);
-    if (msg) { msg.text = new_text; msg.is_edited = true; res.json({ success: true }); }
+    if (msg) { msg.text = new_text; msg.is_edited = true; saveData(); res.json({ success: true }); }
     else res.status(404).json({ error: 'Not found' });
 });
 
 app.post('/api/messages/delete', (req, res) => {
     const { message_id } = req.body;
     const msg = messages.find(m => m.id === message_id);
-    if (msg) { msg.deleted = true; msg.text = 'Message deleted'; res.json({ success: true }); }
+    if (msg) { msg.deleted = true; msg.text = 'Message deleted'; saveData(); res.json({ success: true }); }
     else res.status(404).json({ error: 'Not found' });
 });
 
@@ -120,14 +194,20 @@ app.post('/api/chats/delete', (req, res) => {
     const { chat_id } = req.body;
     chats = chats.filter(c => c.id !== chat_id);
     messages = messages.filter(m => m.chat_id !== chat_id);
+    saveData();
     res.json({ success: true });
 });
 
 app.post('/api/messages/read', (req, res) => {
     const { chat_id, user_id } = req.body;
+    let updated = false;
     messages.forEach(msg => {
-        if (msg.chat_id === chat_id && msg.sender_id !== user_id && !msg.is_read) msg.is_read = true;
+        if (msg.chat_id === chat_id && msg.sender_id !== user_id && !msg.is_read) {
+            msg.is_read = true;
+            updated = true;
+        }
     });
+    if (updated) saveData();
     res.json({ success: true });
 });
 
@@ -136,11 +216,13 @@ app.post('/api/chats/create', (req, res) => {
     if (participants[0] === participants[1]) return res.status(400).json({ error: 'Cannot chat with yourself' });
     const chat = { id: chats.length + 1, name: name || null, participants, created_at: new Date().toISOString() };
     chats.push(chat);
+    saveData();
     res.json({ success: true, chat });
 });
 
-app.get('/api/status', (req, res) => res.json({ status: 'online', users: users.length }));
+app.get('/api/status', (req, res) => res.json({ status: 'online', users: users.length, messages: messages.length }));
 
+// ==================== HTML INTERFACE ====================
 app.get('/', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -161,14 +243,12 @@ app.get('/', (req, res) => {
         body.dark .menu-btn{background:#2d2d3a;color:#fff}
         .menu-btn.hidden{display:none}
         .sidebar{position:fixed;top:0;left:-280px;width:280px;height:100%;background:white;transition:left 0.3s;z-index:1000;padding:20px;box-shadow:2px 0 10px rgba(0,0,0,0.1)}
-        body.dark .sidebar{background:#1e1e2e;color:#fff}
+        body.dark .sidebar{background:#1e1e2e}
         .sidebar.open{left:0}
-        .sidebar-header{display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:15px;border-bottom:1px solid #e0e0e0}
+        .sidebar-header{display:flex;justify-content:space-between;margin-bottom:20px}
         .close-btn{background:none;border:none;font-size:24px;cursor:pointer}
-        .sidebar h3{margin:15px 0 10px;color:#666}
         .sidebar-item{padding:12px;margin:8px 0;background:#f5f5f5;border-radius:12px;cursor:pointer;text-align:center}
         body.dark .sidebar-item{background:#2d2d3a}
-        .sidebar-item:hover{background:#e0e0e0}
         .theme-btn{width:48%;padding:10px;margin:5px 1%;background:#f0f0f0;border:none;border-radius:10px;cursor:pointer}
         .theme-btn.active{background:#667eea;color:white}
         .overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:999;display:none}
@@ -186,7 +266,7 @@ app.get('/', (req, res) => {
         body.dark .step{background:#2d2d3a}
         .chat-item{padding:12px;margin:8px 0;background:#f8f9fa;border-radius:12px;cursor:pointer;display:flex;align-items:center;gap:12px}
         body.dark .chat-item{background:#2d2d3a}
-        .chat-avatar{width:50px;height:50px;border-radius:50%;object-fit:cover;background:#667eea;display:flex;align-items:center;justify-content:center;font-size:20px;color:white}
+        .chat-avatar{width:50px;height:50px;border-radius:50%;object-fit:cover;background:#667eea;display:flex;align-items:center;justify-content:center}
         .chat-info{flex:1}
         .chat-name{font-weight:bold}
         .chat-last{font-size:12px;color:#666;margin-top:4px}
@@ -257,7 +337,7 @@ function closeSidebar(){document.getElementById('sidebar').classList.remove('ope
 async function sidebarSearchUser(){const id=document.getElementById('sidebarSearchId').value;if(!id)return showStatus('Enter ID','error');try{const r=await fetch(API+'/users/find/'+id);const d=await r.json();if(d.success){if(d.user.id===currentUser.id){showStatus('Cannot chat with yourself','error');return;}document.getElementById('sidebarSearchResult').innerHTML='<div class="search-result" onclick="startChatWithUser('+d.user.id+')"><strong>'+d.user.name+'</strong><br>'+d.user.email+'<br>ID: '+d.user.id+'</div>';showStatus('User found!','success');closeSidebar();}else{showStatus('User not found','error');}}catch(e){showStatus('Error','error');}}
 function showMyId(){alert('Your ID: '+currentUser.id);closeSidebar();}
 async function startChatWithUser(uid){try{const r=await fetch(API+'/chats/'+currentUser.id);const chats=await r.json();const ur=await fetch(API+'/users/find/'+uid);const ud=await ur.json();let ex=chats.find(c=>c.name===ud.user.name);if(ex)openChat(ex);else{const cr=await fetch(API+'/chats/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({participants:[currentUser.id,uid],name:ud.user.name})});const cd=await cr.json();if(cd.success)openChat(cd.chat);}document.getElementById('sidebarSearchResult').innerHTML='';document.getElementById('sidebarSearchId').value='';}catch(e){console.error(e);}}
-async function sendCode(){const email=document.getElementById('emailInput').value;if(!email)return showStatus('Enter email','error');showStatus('Sending...','info');try{const r=await fetch(API+'/auth/send-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});const d=await r.json();if(d.success){pendingEmail=email;document.getElementById('step1').classList.add('hidden');document.getElementById('step2').classList.remove('hidden');document.getElementById('emailDisplay').innerHTML='Code sent to <strong>'+email+'</strong>';showStatus('Check server console for code','success');}else{showStatus(d.error,'error');}}catch(e){showStatus('Error: '+e.message,'error');}}
+async function sendCode(){const email=document.getElementById('emailInput').value;if(!email)return showStatus('Enter email','error');showStatus('Sending...','info');try{const r=await fetch(API+'/auth/send-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});const d=await r.json();if(d.success){pendingEmail=email;document.getElementById('step1').classList.add('hidden');document.getElementById('step2').classList.remove('hidden');document.getElementById('emailDisplay').innerHTML='Code sent to <strong>'+email+'</strong>';showStatus('Check your email!','success');}else{showStatus(d.error,'error');}}catch(e){showStatus('Error: '+e.message,'error');}}
 async function verifyCode(){const code=document.getElementById('codeInput').value;if(!code)return showStatus('Enter code','error');try{const r=await fetch(API+'/auth/verify-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:pendingEmail,code})});const d=await r.json();if(d.success){currentUser=d.user;document.getElementById('step2').classList.add('hidden');document.getElementById('mainScreen').classList.remove('hidden');document.getElementById('menuBtn').classList.remove('hidden');updateUserInfo();loadChats();showStatus('Welcome, '+currentUser.name+'!','success');const st=localStorage.getItem('theme');if(st)setTheme(st);}else{showStatus(d.error,'error');}}catch(e){showStatus('Error: '+e.message,'error');}}
 async function loadChats(){try{const r=await fetch(API+'/chats/'+currentUser.id);const chats=await r.json();const c=document.getElementById('chatsList');c.innerHTML='';if(chats.length===0){c.innerHTML='<div style="text-align:center;padding:30px;color:#999">No chats<br><small>Click menu and find user by ID</small></div>';return;}chats.forEach(chat=>{const div=document.createElement('div');div.className='chat-item';div.onclick=()=>openChat(chat);const av=chat.avatar?'<img src="'+chat.avatar+'" class="chat-avatar" style="width:50px;height:50px;border-radius:50%;object-fit:cover">':'<div class="chat-avatar">👤</div>';div.innerHTML=av+'<div class="chat-info"><div class="chat-name">'+chat.name+(chat.unread_count>0?'<span class="unread">'+chat.unread_count+'</span>':'')+'</div><div class="chat-last">'+chat.last_message+'</div></div>';c.appendChild(div);});}catch(e){console.error(e);}}
 async function openChat(chat){currentChat=chat;document.getElementById('mainScreen').classList.add('hidden');document.getElementById('chatScreen').classList.remove('hidden');document.getElementById('chatTitle').innerHTML=chat.name;if(chat.avatar){document.getElementById('chatAvatar').src=chat.avatar;document.getElementById('chatAvatar').style.display='block';}else{document.getElementById('chatAvatar').style.display='none';}await fetch(API+'/messages/read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chat.id,user_id:currentUser.id})});loadMessages();if(msgInterval)clearInterval(msgInterval);msgInterval=setInterval(loadMessages,3000);}
@@ -281,4 +361,4 @@ document.getElementById('sidebarSearchId').addEventListener('keypress',e=>{if(e.
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`AntiBlock server running on port ${PORT}`));
